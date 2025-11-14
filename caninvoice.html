@@ -1,0 +1,1149 @@
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title data-i18n="app_title">贴票小助手</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+        <style>
+            :root {
+                --primary-color: #2563EB; /* Blue-600 */
+            }
+            body {
+                font-family: 'Inter', sans-serif;
+                background-color: #f7f9fb;
+            }
+            /* Custom styling for the voucher elements and canvas area */
+            .canvas-container {
+                min-height: 85vh;
+                background-color: #ffffff;
+                /* 允许垂直滚动 */
+                overflow-y: auto; 
+                overflow-x: hidden;
+                border: 1px solid #e5e7eb; 
+                user-select: none;
+                position: relative;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+                transition: width 0.3s;
+            }
+            .voucher {
+                position: absolute;
+                width: 160px;
+                height: 90px;
+                cursor: pointer;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                padding: 8px;
+                font-size: 10px;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+                transition: box-shadow 0.1s, background-color 0.3s;
+                touch-action: none; 
+                border-radius: 0.5rem;
+            }
+            .voucher:active, .voucher.selected {
+                cursor: grabbing;
+                box-shadow: 0 0 0 3px var(--primary-color);
+                z-index: 100;
+            }
+            .control-button {
+                transition: all 0.15s ease-in-out;
+            }
+            .control-button:hover {
+                transform: translateY(-1px);
+            }
+            
+            .message-box {
+                position: fixed;
+                top: 1rem;
+                right: 1rem;
+                z-index: 200;
+            }
+
+            /* 票据类型颜色高亮 */
+            .voucher.type-traffic { background-color: #dbeafe; border: 1px solid #93c5fd; } /* Blue (交通费) */
+            .voucher.type-dining { background-color: #fce7f3; border: 1px solid #f9a8d4; } /* Pink (餐费) */
+            .voucher.type-accommodation { background-color: #d1fae5; border: 1px solid #6ee7b7; } /* Green (住宿费) */
+            .voucher.type-office { background-color: #e0f2fe; border: 1px solid #7dd3fc; } /* Light Blue (办公用品) */
+            .voucher.type-other { background-color: #fef3c7; border: 1px solid #fcd34d; } /* Yellow (其他) */
+            
+            /* 侧边栏样式 */
+            #sidebar {
+                width: 0; 
+                opacity: 0;
+                overflow: hidden;
+                transition: all 0.3s ease-in-out;
+            }
+            #sidebar.open {
+                width: 300px;
+                opacity: 1;
+                padding-left: 1rem;
+            }
+
+            /* Loading Spinner */
+            .spinner {
+                border: 4px solid rgba(0, 0, 0, 0.1);
+                border-top: 4px solid white;
+                border-radius: 50%;
+                width: 1rem;
+                height: 1rem;
+                animation: spin 1s linear infinite;
+                margin-right: 0.5rem;
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+
+            /* 保证在小屏幕上侧边栏堆叠 */
+            @media (max-width: 768px) {
+                #main-content-wrapper {
+                    flex-direction: column;
+                }
+                #sidebar.open {
+                    width: 100%;
+                    padding-left: 0;
+                    margin-top: 1rem;
+                }
+            }
+        </style>
+    </head>
+    <body class="p-4 md:p-8">
+
+        <!-- 标题和核心价值 -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-800" data-i18n="app_title">贴票小助手</h1>
+            <p class="text-lg text-gray-600 mt-1" data-i18n="app_subtitle">3分钟完成贴票整理，告别报销前的准备工作烦恼</p>
+            
+            <!-- 语言和货币选择器 -->
+            <div class="mt-4 flex flex-col sm:flex-row justify-center items-center space-y-2 sm:space-y-0 sm:space-x-4">
+                <!-- 语言选择器 -->
+                <div class="flex items-center space-x-2">
+                    <span class="text-sm font-medium text-gray-700">Language:</span>
+                    <select id="language-select" class="border border-gray-300 rounded-lg py-1 px-3 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="zh">简体中文</option>
+                        <option value="en">English</option>
+                        <option value="ko">한국어</option>
+                    </select>
+                </div>
+
+                <!-- 货币选择器 -->
+                <div class="flex items-center space-x-2">
+                    <span class="text-sm font-medium text-gray-700" data-i18n="label_currency">货币:</span>
+                    <select id="currency-select" class="border border-gray-300 rounded-lg py-1 px-3 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="CNY">¥ CNY (人民币)</option>
+                        <option value="USD">$ USD (美元)</option>
+                    </select>
+                </div>
+            </div>
+        </header>
+
+        <!-- 主操作区 -->
+        <div class="max-w-7xl mx-auto">
+            
+            <!-- 顶部控制面板 -->
+            <div class="flex flex-col md:flex-row justify-between items-center bg-white p-4 mb-4 rounded-lg shadow-md border border-gray-100">
+                <div class="flex space-x-3 mb-4 md:mb-0">
+                    
+                    <!-- 隐藏的文件输入框 -->
+                    <input type="file" id="file-upload" accept="image/*" class="hidden">
+                    <button id="upload-btn" class="control-button bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-full shadow-lg flex items-center" data-i18n="btn_upload">
+                        📸 拍照/上传票据
+                    </button>
+
+                    <button id="align-btn" class="control-button bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded-full shadow-lg" data-i18n="btn_align">
+                        🤖 智能吸附/对齐
+                    </button>
+                </div>
+                
+                <div class="flex space-x-3 items-center">
+                    <span class="text-gray-700 font-medium" data-i18n="label_layout_mode">排版模式:</span>
+                    <select id="layout-mode-select" class="control-button border border-gray-300 rounded-full py-2 px-4 focus:ring-blue-500 focus:border-blue-500">
+                        <option value="A4" data-i18n="layout_a4">A4 标准模板 (自由)</option>
+                        <option value="DateGroup" data-i18n="layout_date_group">按时间分组 (智能整理)</option>
+                        <option value="CategoryGroup" data-i18n="layout_category_group">按类别分组 (智能整理)</option>
+                    </select>
+                    <button id="export-btn" class="control-button bg-primary-color hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-full shadow-lg" data-i18n="btn_export">
+                        📥 导出打印优化版 PDF (模拟)
+                    </button>
+                </div>
+            </div>
+
+            <!-- Canvas 画布区域与侧边栏容器 -->
+            <div id="main-content-wrapper" class="flex flex-col md:flex-row w-full gap-4">
+                <!-- Canvas 画布区域 -->
+                <div id="canvas-area" class="canvas-container rounded-xl flex-grow">
+                    <!-- 票据将动态添加到这里 -->
+                    <div class="absolute inset-0 flex items-center justify-center text-gray-400 pointer-events-none">
+                        <span id="canvas-hint" class="text-2xl" data-i18n="canvas_hint">将票据拖拽到此处，开始自由排版...</span>
+                    </div>
+                </div>
+
+                <!-- 右侧票据详情侧边栏 -->
+                <div id="sidebar" class="bg-white rounded-xl shadow-lg border border-gray-100 flex-shrink-0">
+                    <div class="p-4 flex flex-col h-full">
+                        <div class="flex justify-between items-center pb-3 border-b mb-3">
+                            <h3 class="text-lg font-bold text-gray-800" data-i18n="sidebar_title">🧾 票据详情</h3>
+                            <button id="close-sidebar-btn" class="text-gray-500 hover:text-gray-900 font-bold text-xl leading-none">&times;</button>
+                        </div>
+
+                        <!-- 详情内容区 -->
+                        <div id="voucher-details-content" class="space-y-4 overflow-y-auto">
+                            <p class="text-gray-500 text-center pt-8" data-i18n="sidebar_hint">请点击画布中的任一票据查看详情。</p>
+                            <!-- 详情数据将通过 JS 填充 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 消息提示框 -->
+        <div id="message-box" class="message-box"></div>
+
+    <script>
+        // --- API & Auth Configuration ---
+        const API_MODEL = 'gemini-2.5-flash-preview-09-2025';
+        const API_KEY = "";
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${API_MODEL}:generateContent?key=${API_KEY}`;
+        
+        // 费用类别映射表
+        const CATEGORY_MAP = {
+            'traffic': { zh: '交通费', en: 'Traffic', ko: '교통비', color: 'type-traffic' },
+            'dining': { zh: '餐费', en: 'Dining', ko: '식사비', color: 'type-dining' },
+            'accommodation': { zh: '住宿费', en: 'Accommodation', ko: '숙박비', color: 'type-accommodation' },
+            'office': { zh: '办公用品', en: 'Office Supply', ko: '사무용품', color: 'type-office' },
+            'other': { zh: '其他', en: 'Other', ko: '기타', color: 'type-other' },
+        };
+
+        // --- 货币设置 ---
+        const CURRENCY_SYMBOLS = {
+            'CNY': '¥',
+            'USD': '$',
+        };
+        let currentCurrency = 'CNY';
+        let currentCurrencySymbol = CURRENCY_SYMBOLS[currentCurrency];
+
+
+        // --- 国际化/语言支持 ---
+        const translations = {
+            // ... (保持不变，或确保 OCR 消息已更新)
+            // --- App & General ---
+            app_title: {
+                zh: '贴票小助手',
+                en: 'Caninvoice',
+                ko: 'Caninvoice'
+            },
+            app_subtitle: {
+                zh: '3分钟完成贴票整理，告别报销前的准备工作烦恼',
+                en: 'Complete voucher arrangement in 3 minutes, say goodbye to pre-reimbursement hassles.',
+                ko: '3분 만에 영수증 정리 완료, 환급 전 준비 걱정 끝'
+            },
+            label_currency: {
+                zh: '货币:',
+                en: 'Currency:',
+                ko: '통화:'
+            },
+            btn_upload: {
+                zh: '📸 拍照/上传票据',
+                en: '📸 Capture/Upload Voucher',
+                ko: '📸 영수증 촬영/업로드'
+            },
+            btn_align: {
+                zh: '🤖 智能吸附/对齐',
+                en: '🤖 Smart Snap/Align',
+                ko: '🤖 스마트 정렬/배치'
+            },
+            label_layout_mode: {
+                zh: '排版模式:',
+                en: 'Layout Mode:',
+                ko: '배치 모드:'
+            },
+            layout_a4: {
+                zh: 'A4 标准模板 (自由)',
+                en: 'A4 Standard Template (Free)',
+                ko: 'A4 표준 템플릿 (자유)'
+            },
+            layout_date_group: {
+                zh: '按时间分组 (智能整理)',
+                en: 'Group by Date (Smart Arrange)',
+                ko: '날짜별 그룹 (스마트 정리)'
+            },
+            layout_category_group: {
+                zh: '按类别分组 (智能整理)',
+                en: 'Group by Category (Smart Arrange)',
+                ko: '카테고리별 그룹 (스마트 정리)'
+            },
+            btn_export: {
+                zh: '📥 导出打印优化版 PDF (模拟)',
+                en: '📥 Export Print Optimized PDF (Mock)',
+                ko: '📥 인쇄 최적화 PDF 내보내기 (모의)'
+            },
+            canvas_hint: {
+                zh: '将票据拖拽到此处，开始自由排版...',
+                en: 'Drag vouchers here to start free arrangement...',
+                ko: '여기로 영수증을 드래그하여 자유롭게 배치하세요...'
+            },
+            sidebar_title: {
+                zh: '🧾 票据详情',
+                en: '🧾 Voucher Details',
+                ko: '🧾 영수증 세부 정보'
+            },
+            sidebar_hint: {
+                zh: '请点击画布中的任一票据查看详情。',
+                en: 'Please click any voucher on the canvas to view details.',
+                ko: '캔버스에서 영수증을 클릭하여 세부 정보를 확인하세요.'
+            },
+
+            // --- Details Pane ---
+            detail_amount: {
+                zh: '总金额:',
+                en: 'Total Amount:',
+                ko: '총 금액:'
+            },
+            detail_type: {
+                zh: '识别类型:',
+                en: 'Recognized Type:',
+                ko: '인식된 유형:'
+            },
+            detail_date: {
+                zh: '交易日期:',
+                en: 'Transaction Date:',
+                ko: '거래 날짜:'
+            },
+            detail_summary: {
+                zh: '发票摘要:',
+                en: 'Voucher Summary:',
+                ko: '영수증 요약:'
+            },
+            detail_issuer: {
+                zh: '开票方:',
+                en: 'Issuer:',
+                ko: '발행처:'
+            },
+            detail_tax: {
+                zh: '税额:',
+                en: 'Tax Amount:',
+                ko: '세액:'
+            },
+            btn_remove: {
+                zh: '❌ 移除票据',
+                en: '❌ Remove Voucher',
+                ko: '❌ 영수증 제거'
+            },
+            
+            // --- Dynamic Messages ---
+            msg_voucher: { zh: '票据', en: 'Voucher', ko: '영수증' },
+            msg_rotated: { zh: '已旋转', en: 'rotated', ko: '회전됨' },
+            msg_upload_start: { zh: '📤 正在上传并启动智能 OCR 识别...', en: '📤 Uploading and starting Smart OCR recognition...', ko: '📤 업로드 및 스마트 OCR 인식 시작 중...' },
+            msg_upload_success: { 
+                zh: (id, amount, type) => `✅ 票据 #${id} 识别成功并添加至画布! (${currentCurrencySymbol}${amount} - ${type})`, 
+                en: (id, amount, type) => `✅ Voucher #${id} successfully recognized and added! (${currentCurrencySymbol}${amount} - ${type})`, 
+                ko: (id, amount, type) => `✅ 영수증 #${id} 인식 성공 및 캔버스에 추가됨! (${currentCurrencySymbol}${amount} - ${type})` 
+            },
+            msg_upload_fail: {
+                zh: (err) => `❌ OCR 识别失败: ${err}`,
+                en: (err) => `❌ OCR recognition failed: ${err}`,
+                ko: (err) => `❌ OCR 인식 실패: ${err}`
+            },
+            msg_no_vouchers: {
+                zh: '画布上没有票据需要对齐。',
+                en: 'There are no vouchers on the canvas to align.',
+                ko: '정렬할 영수증이 캔버스에 없습니다.'
+            },
+            msg_align_date: {
+                zh: '🤖 已按【时间】分组排版。',
+                en: '🤖 Arranged by [Date] Grouping.',
+                ko: '🤖 [날짜] 그룹별로 배치되었습니다.'
+            },
+            msg_align_category: {
+                zh: '🤖 已按【类别】分组排版。',
+                en: '🤖 Arranged by [Category] Grouping.',
+                ko: '🤖 [카테고리] 그룹별로 배치되었습니다.'
+            },
+            msg_align_a4: {
+                zh: '🤖 智能吸附/对齐激活 (A4标准模式)。',
+                en: '🤖 Smart Snap/Align activated (A4 Standard Mode).',
+                ko: '🤖 스마트 정렬/배치 활성화 (A4 표준 모드).'
+            },
+            msg_export_error: {
+                zh: '请先添加票据再导出。',
+                en: 'Please add vouchers before exporting.',
+                ko: '내보내기 전에 영수증을 추가하세요.'
+            },
+            msg_export_in_progress: {
+                zh: (count) => `📥 正在使用离屏 Canvas 快速生成 ${count} 张票据的 PDF...`,
+                en: (count) => `📥 Generating PDF for ${count} vouchers using off-screen Canvas...`,
+                ko: '📥 오프스크린 캔버스를 사용하여 영수증 생성 중...'
+            },
+            msg_export_success: {
+                zh: '✅ PDF (打印优化版) 生成并已下载到您的设备。',
+                en: '✅ PDF (Print Optimized) generated and downloaded to your device.',
+                ko: '✅ PDF (인쇄 최적화)가 생성되어 장치로 다운로드되었습니다.'
+            },
+            msg_welcome: {
+                zh: '欢迎使用贴票整理助手！已为您加载 20 张模拟 OCR 票据。请点击 "拍照/上传票据" 体验 OCR 功能。',
+                en: 'Welcome to the Voucher Arrangement Assistant! 20 mock OCR vouchers have been loaded. Click "Capture/Upload Voucher" to try the OCR feature.',
+                ko: '영수증 정리 도우미에 오신 것을 환영합니다! 20개의 모의 OCR 영수증이 로드되었습니다. "영수증 촬영/업로드"를 클릭하여 OCR 기능을 사용해 보세요.'
+            }
+        };
+
+        let currentLanguage = 'zh'; // 默认中文
+
+        function getI18nText(key, ...args) {
+            const text = translations[key] ? translations[key][currentLanguage] : key;
+            if (typeof text === 'function') {
+                return text(...args);
+            }
+            return text || key;
+        }
+
+        // 更新所有票据和侧边栏的显示货币/语言
+        function updateVoucherDisplays() {
+            const vouchers = document.querySelectorAll('.voucher');
+            vouchers.forEach(voucher => {
+                const data = voucher.dataset;
+                const amount = parseFloat(data.amount);
+                
+                // 获取当前语言的类型名称
+                const typeInCurrentLang = data['type_' + currentLanguage] || data.type;
+
+                // 重新渲染票据主体内容
+                voucher.querySelector('.text-xl').innerHTML = `${currentCurrencySymbol}${amount.toFixed(2)}`;
+                voucher.querySelector('.text-xs.font-semibold').textContent = typeInCurrentLang;
+            });
+
+            // 如果侧边栏打开，则刷新详情以更新货币符号
+            const selectedVoucher = document.querySelector('.voucher.selected');
+            if (selectedVoucher) {
+                showVoucherDetails(selectedVoucher);
+            }
+        }
+
+
+        function translateUI(lang) {
+            currentLanguage = lang;
+            // 1. 翻译静态文本
+            document.querySelectorAll('[data-i18n]').forEach(element => {
+                const key = element.getAttribute('data-i18n');
+                const translation = getI18nText(key);
+
+                if (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA') {
+                    element.placeholder = translation;
+                } else if (element.tagName === 'OPTION') {
+                    element.textContent = translation;
+                } else {
+                    element.textContent = translation;
+                }
+            });
+            
+            // 2. 翻译动态/特殊区域
+            document.querySelector('title').textContent = getI18nText('app_title');
+            
+            // 3. 重置侧边栏提示
+            if (!document.querySelector('.voucher.selected')) {
+                detailsContent.innerHTML = `<p class="text-gray-500 text-center pt-8">${getI18nText('sidebar_hint')}</p>`;
+            }
+
+            // 4. 更新所有票据和侧边栏的显示货币/语言
+            updateVoucherDisplays();
+        }
+
+        // 语言切换事件监听
+        const languageSelect = document.getElementById('language-select');
+        languageSelect.addEventListener('change', (e) => {
+            translateUI(e.target.value);
+        });
+
+        // 货币切换事件监听 (NEW)
+        const currencySelect = document.getElementById('currency-select');
+        currencySelect.addEventListener('change', (e) => {
+            currentCurrency = e.target.value;
+            currentCurrencySymbol = CURRENCY_SYMBOLS[currentCurrency];
+            // 切换货币后，立即更新所有显示的金额
+            updateVoucherDisplays(); 
+        });
+
+
+        // --- 消息提示功能 ---
+        const messageBox = document.getElementById('message-box');
+        function showMessage(text, type = 'info', duration = 3000) {
+            const color = type === 'success' ? 'bg-green-100 border-green-400 text-green-700' : 
+                        type === 'error' ? 'bg-red-100 border-red-400 text-red-700' : 
+                        'bg-blue-100 border-blue-400 text-blue-700';
+            
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `p-4 rounded-lg border shadow-md mb-2 transition-opacity duration-300 ${color}`;
+            alertDiv.textContent = text;
+            
+            messageBox.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                alertDiv.style.opacity = '0';
+                setTimeout(() => alertDiv.remove(), 300);
+            }, duration);
+        }
+        
+        // --- 辅助函数：文件转 Base64 ---
+        function getBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => {
+                    // Remove the data URI scheme prefix (e.g., 'data:image/jpeg;base64,')
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        // --- 辅助函数：带指数退避的 Fetch ---
+        async function fetchWithRetry(url, options, maxRetries = 5) {
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(url, options);
+                    if (response.status === 429) {
+                        const delay = Math.pow(2, i) * 1000 + Math.random() * 500;
+                        console.warn(`Rate limit hit, retrying in ${delay / 1000}s...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        continue;
+                    }
+                    if (!response.ok) {
+                        const errorBody = await response.text();
+                        throw new Error(`API call failed with status ${response.status}: ${errorBody}`);
+                    }
+                    return response;
+                } catch (error) {
+                    if (i === maxRetries - 1) {
+                        throw error;
+                    }
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 500;
+                    console.warn(`Fetch error, retrying in ${delay / 1000}s...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+
+        // --- 票据数据结构和生成 ---
+        let voucherCount = 0;
+        const canvasArea = document.getElementById('canvas-area');
+        const sidebar = document.getElementById('sidebar');
+        const detailsContent = document.getElementById('voucher-details-content');
+        
+        /**
+         * 将 OCR 识别结果映射到完整的票据数据结构
+         * @param {Object} ocrResult - 原始 OCR 结果
+         * @returns {Object} 完整票据数据
+         */
+        function mapOcrResultToVoucherData(ocrResult) {
+            // 确保类别是有效值，否则默认为 'other'
+            const categoryKey = ocrResult.category && CATEGORY_MAP[ocrResult.category.toLowerCase()]
+                ? ocrResult.category.toLowerCase()
+                : 'other';
+
+            const categoryData = CATEGORY_MAP[categoryKey];
+            
+            // 尝试解析金额和税额为浮点数
+            const amount = parseFloat(ocrResult.amount) || 0.00;
+            const tax = parseFloat(ocrResult.tax) || 0.00;
+
+            return {
+                amount: amount,
+                date: ocrResult.date || 'N/A',
+                type: categoryData.zh, // 中文类型
+                type_en: categoryData.en, // 英文类型
+                type_ko: categoryData.ko, // 韩文类型
+                category: categoryKey, // 内部识别键
+                desc: ocrResult.desc || '未识别摘要',
+                desc_en: ocrResult.desc || 'Unrecognized summary',
+                desc_ko: ocrResult.desc || '인식되지 않은 요약',
+                issuer: ocrResult.issuer || '未识别开票方',
+                issuer_en: ocrResult.issuer || 'Unrecognized Issuer',
+                issuer_ko: ocrResult.issuer || '인식되지 않은 발행처',
+                tax: tax,
+            };
+        }
+
+        // 初始加载时使用的模拟数据 (用于快速演示)
+        const MOCK_VOUCHER_TYPES = [
+            mapOcrResultToVoucherData({ amount: 58.50, date: '2025-05-12', category: 'traffic', desc: '滴滴出行', issuer: '深圳交通集团', tax: 5.00 }),
+            mapOcrResultToVoucherData({ amount: 120.00, date: '2025-05-15', category: 'dining', desc: '商务午餐', issuer: '喜茶万象城店', tax: 10.90 }),
+            mapOcrResultToVoucherData({ amount: 25.80, date: '2025-05-18', category: 'office', desc: '打印耗材', issuer: '京东自营', tax: 2.34 }),
+            mapOcrResultToVoucherData({ amount: 1500.00, date: '2025-06-01', category: 'accommodation', desc: '深圳出差', issuer: '希尔顿酒店', tax: 136.36 }),
+            mapOcrResultToVoucherData({ amount: 35.00, date: '2025-06-05', category: 'traffic', desc: '地铁', issuer: '深圳地铁', tax: 0.00 }),
+            mapOcrResultToVoucherData({ amount: 80.00, date: '2025-05-12', category: 'dining', desc: '工作晚餐', issuer: '海底捞', tax: 7.27 }),
+            mapOcrResultToVoucherData({ amount: 480.00, date: '2025-06-02', category: 'accommodation', desc: '酒店', issuer: '维也纳酒店', tax: 43.64 }),
+            mapOcrResultToVoucherData({ amount: 10.00, date: '2025-05-13', category: 'other', desc: '停车费', issuer: '万象城停车场', tax: 0.00 })
+        ];
+
+
+        function createVoucherElement(id, data, x, y, rotation = 0) {
+            const categoryClass = CATEGORY_MAP[data.category] ? CATEGORY_MAP[data.category].color : 'type-other';
+            const typeInCurrentLang = data['type_' + currentLanguage] || data.type;
+
+            const voucher = document.createElement('div');
+            voucher.className = `voucher transform transition-transform duration-300 ${categoryClass}`;
+            voucher.id = `voucher-${id}`;
+            
+            // 票据数据 (详细模拟 OCR 结果)
+            voucher.innerHTML = `
+                <div class="flex justify-between w-full">
+                    <span class="text-xs font-semibold text-gray-700">${typeInCurrentLang}</span>
+                    <span class="text-xs text-gray-500">${data.date.substring(5)}</span>
+                </div>
+                <!-- 使用 currentCurrencySymbol 替换 ¥ -->
+                <div class="text-xl font-extrabold text-gray-800 my-1">${currentCurrencySymbol}${data.amount.toFixed(2)}</div>
+                <div class="text-xs text-gray-400 truncate w-full text-center">(${data['desc_' + currentLanguage] || data.desc})</div>
+            `;
+            
+            // 初始位置和旋转
+            voucher.style.left = `${x}px`;
+            voucher.style.top = `${y}px`;
+            voucher.style.transform = `rotate(${rotation}deg)`;
+            
+            // 存储所有数据到 dataset
+            Object.keys(data).forEach(key => {
+                voucher.dataset[key] = String(data[key]); // 确保所有数据都存储为字符串
+            });
+            voucher.dataset.id = String(id);
+            
+            return voucher;
+        }
+
+        function addVoucher(data) {
+            voucherCount++;
+            const id = voucherCount;
+            // 初始位置随机散开
+            const x = Math.random() * (canvasArea.clientWidth - 160); 
+            const y = Math.random() * (canvasArea.clientHeight - 90);
+            const rotation = Math.floor(Math.random() * 60) - 30; // -30 to +30 degrees
+            
+            const voucherElement = createVoucherElement(id, data, x, y, rotation);
+            canvasArea.appendChild(voucherElement);
+            
+            // 启用拖拽、旋转和点击查看详情
+            makeInteractive(voucherElement);
+            
+            // 动态消息使用当前语言和货币符号
+            const typeInCurrentLang = data['type_' + currentLanguage] || data.type;
+            showMessage(getI18nText('msg_upload_success', id, data.amount.toFixed(2), typeInCurrentLang), 'success');
+
+            // 移除画布中央的提示文本
+            const hint = canvasArea.querySelector('.pointer-events-none');
+            if (hint) hint.remove();
+            
+            // 调整画布高度
+            updateCanvasHeight();
+
+            return voucherElement;
+        }
+        
+        // --- OCR 核心逻辑 (不变) ---
+
+        /**
+         * 调用 Gemini API 进行 OCR 识别和分类
+         * @param {string} base64Image - 票据图像的 Base64 字符串
+         * @param {string} mimeType - 图像的 MIME 类型
+         * @returns {Promise<Object>} 包含金额、日期、类别等的 JSON 对象
+         */
+        async function callGeminiOCR(base64Image, mimeType) {
+            const systemInstruction = "你是一名专业的财务助理。分析提供的票据或发票图像。提取总金额 (Amount), 交易日期 (Date), 简要费用描述 (Desc), 开票方名称 (Issuer), 和税额 (Tax)。然后，根据费用性质，将费用归类为以下五个类别键之一：'traffic', 'dining', 'accommodation', 'office', 或 'other'。所有金额应保留两位小数。日期格式应为 YYYY-MM-DD。请以 JSON 格式输出结果，不要包含任何额外的文本或解释。";
+            const userQuery = "请识别这张发票/票据的关键信息并进行分类。";
+            const categoryKeys = Object.keys(CATEGORY_MAP).join("', '");
+            
+            const payload = {
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: userQuery },
+                            {
+                                inlineData: {
+                                    mimeType: mimeType,
+                                    data: base64Image
+                                }
+                            }
+                        ]
+                    }
+                ],
+                systemInstruction: {
+                    parts: [{ text: systemInstruction }]
+                },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "amount": { "type": "NUMBER", "description": "Total expense amount, formatted as a number (e.g., 120.50)." },
+                            "date": { "type": "STRING", "description": "Transaction date, formatted as YYYY-MM-DD (e.g., 2025-06-15)." },
+                            "category": { "type": "STRING", "enum": Object.keys(CATEGORY_MAP), "description": `The expense category key: one of '${categoryKeys}'.` },
+                            "desc": { "type": "STRING", "description": "A brief, one-sentence summary of the expense." },
+                            "issuer": { "type": "STRING", "description": "The name of the company or entity that issued the voucher/invoice." },
+                            "tax": { "type": "NUMBER", "description": "The tax or VAT amount, formatted as a number. Use 0.00 if not found." }
+                        },
+                        required: ["amount", "date", "category", "desc", "issuer", "tax"]
+                    }
+                }
+            };
+
+            const options = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            };
+
+            const response = await fetchWithRetry(API_URL, options);
+            const result = await response.json();
+
+            const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+            
+            if (!jsonText) {
+                throw new Error("OCR 结果为空或格式不正确。");
+            }
+            
+            // 解析 JSON 字符串
+            const parsedJson = JSON.parse(jsonText);
+            return parsedJson;
+        }
+
+        // --- 文件上传和处理事件 (不变) ---
+        
+        // 触发隐藏的文件输入框
+        document.getElementById('upload-btn').addEventListener('click', () => {
+            document.getElementById('file-upload').click();
+        });
+
+        // 监听文件选择事件
+        document.getElementById('file-upload').addEventListener('change', handleFileUpload);
+
+        // 文件上传处理函数
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file || !file.type.startsWith('image/')) {
+                showMessage(getI18nText('msg_upload_fail', '请选择有效的图片文件。'), 'error');
+                return;
+            }
+
+            // 1. UI 提示加载中
+            const originalText = document.getElementById('upload-btn').innerHTML;
+            const spinnerHtml = `<div class="spinner"></div>`;
+            document.getElementById('upload-btn').innerHTML = `${spinnerHtml} ${getI18nText('msg_upload_start').split(' ')[2]}`;
+            document.getElementById('upload-btn').disabled = true;
+
+            try {
+                // 2. 转换 Base64
+                const base64Image = await getBase64(file);
+                const mimeType = file.type;
+
+                // 3. 调用 Gemini OCR API
+                const ocrResult = await callGeminiOCR(base64Image, mimeType);
+
+                // 4. 映射并添加票据
+                const voucherData = mapOcrResultToVoucherData(ocrResult);
+                addVoucher(voucherData);
+
+            } catch (error) {
+                console.error('OCR Process Error:', error);
+                // 显示详细错误信息
+                const errorMessage = error.message.includes("API call failed") ? 
+                                    getI18nText('msg_upload_fail', '模型服务出错，请重试。') :
+                                    getI18nText('msg_upload_fail', error.message);
+                showMessage(errorMessage, 'error', 5000);
+            } finally {
+                // 5. 恢复按钮状态
+                document.getElementById('upload-btn').innerHTML = originalText;
+                document.getElementById('upload-btn').disabled = false;
+                // 清空文件输入，确保下次change事件能触发
+                event.target.value = null; 
+            }
+        }
+
+
+        // --- 侧边栏和详情功能 ---
+
+        // 存储当前选中的票据ID
+        let selectedVoucherId = null;
+
+        function showVoucherDetails(voucherElement) {
+            // 清除上一个选中状态
+            document.querySelectorAll('.voucher.selected').forEach(el => el.classList.remove('selected'));
+
+            // 设置新选中状态
+            voucherElement.classList.add('selected');
+            selectedVoucherId = voucherElement.dataset.id;
+            
+            const data = voucherElement.dataset;
+            
+            // 使用 parseFloat 确保金额数据正确，即使 dataset 存储的是字符串
+            const amount = parseFloat(data.amount) || 0;
+            const tax = parseFloat(data.tax) || 0;
+
+            // 根据当前语言获取翻译数据
+            const type = data['type_' + currentLanguage] || data.type;
+            const desc = data['desc_' + currentLanguage] || data.desc;
+            const issuer = data['issuer_' + currentLanguage] || data.issuer;
+
+            const html = `
+                <div class="space-y-3 p-2 bg-gray-50 rounded-lg">
+                    <div class="font-bold text-lg text-gray-800">${getI18nText('msg_voucher')} #${data.id}</div>
+                    
+                    <div class="flex justify-between py-1 border-b">
+                        <span class="text-gray-500">${getI18nText('detail_amount')}</span>
+                        <!-- 使用 currentCurrencySymbol 替换 ¥ -->
+                        <span class="font-bold text-xl text-red-600">${currentCurrencySymbol}${amount.toFixed(2)}</span>
+                    </div>
+
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">${getI18nText('detail_type')}</span>
+                        <span class="font-semibold text-gray-700">${type}</span>
+                    </div>
+                    
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">${getI18nText('detail_date')}</span>
+                        <span class="font-semibold text-gray-700">${data.date}</span>
+                    </div>
+                    
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">${getI18nText('detail_summary')}</span>
+                        <span class="font-semibold text-gray-700 max-w-[150px] truncate">${desc}</span>
+                    </div>
+
+                    <div class="flex justify-between border-t pt-3">
+                        <span class="text-gray-500">${getI18nText('detail_issuer')}</span>
+                        <span class="text-sm text-gray-600">${issuer || 'N/A'}</span>
+                    </div>
+
+                    <div class="flex justify-between">
+                        <span class="text-gray-500">${getI18nText('detail_tax')}</span>
+                        <!-- 使用 currentCurrencySymbol 替换 ¥ -->
+                        <span class="text-sm text-gray-600">${currentCurrencySymbol}${tax.toFixed(2)}</span>
+                    </div>
+
+                    <div class="pt-4">
+                        <button class="w-full bg-red-100 text-red-700 font-semibold py-2 rounded-lg hover:bg-red-200" onclick="removeVoucher(${data.id})">
+                            ${getI18nText('btn_remove')}
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            detailsContent.innerHTML = html;
+            sidebar.classList.add('open');
+        }
+
+        // 模拟移除票据功能
+        function removeVoucher(id) {
+            const voucher = document.getElementById(`voucher-${id}`);
+            if (voucher) {
+                voucher.remove();
+                showMessage(`${getI18nText('msg_voucher')} #${id} ${getI18nText('btn_remove').split(' ')[0]}`, 'error');
+            }
+            // 关闭侧边栏
+            document.getElementById('close-sidebar-btn').click(); 
+            updateCanvasHeight(); // 移除后更新画布高度
+        }
+        // 将 removeVoucher 暴露给全局作用域，以便 HTML 能够调用
+        window.removeVoucher = removeVoucher;
+
+        // 关闭侧边栏
+        document.getElementById('close-sidebar-btn').addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            selectedVoucherId = null;
+            document.querySelectorAll('.voucher.selected').forEach(el => el.classList.remove('selected'));
+            detailsContent.innerHTML = `<p class="text-gray-500 text-center pt-8">${getI18nText('sidebar_hint')}</p>`;
+        });
+
+        // --- 拖拽和旋转逻辑 (不变) ---
+        let activeVoucher = null;
+        let isDragging = false; 
+        let xOffset = 0, yOffset = 0;
+
+        function dragStart(e) {
+            let target = e.target.closest('.voucher');
+            if (!target) return;
+            
+            isDragging = false; 
+            activeVoucher = target;
+            activeVoucher.classList.add('selected'); 
+
+            // 获取票据相对于画布的位置
+            const voucherLeft = activeVoucher.offsetLeft;
+            const voucherTop = activeVoucher.offsetTop;
+            
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+            // 计算鼠标/触摸点与票据左上角的偏移量
+            const canvasRect = canvasArea.getBoundingClientRect();
+            const scrollLeft = canvasArea.scrollLeft;
+            const scrollTop = canvasArea.scrollTop;
+
+            xOffset = clientX - (canvasRect.left + voucherLeft - scrollLeft);
+            yOffset = clientY - (canvasRect.top + voucherTop - scrollTop);
+
+
+            canvasArea.addEventListener('mousemove', drag, false);
+            canvasArea.addEventListener('mouseup', dragEnd, false);
+            canvasArea.addEventListener('touchmove', drag, false);
+            canvasArea.addEventListener('touchend', dragEnd, false);
+        }
+
+        function drag(e) {
+            if (!activeVoucher) return;
+            e.preventDefault();
+            
+            // 区分拖拽和点击
+            if (!isDragging) {
+                // 只有移动超过一定阈值才算拖拽
+                isDragging = true; 
+                activeVoucher.classList.add('cursor-grabbing');
+            }
+
+            const canvasRect = canvasArea.getBoundingClientRect();
+            const scrollLeft = canvasArea.scrollLeft;
+            const scrollTop = canvasArea.scrollTop;
+            
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+            // 计算新位置（相对于画布的左上角，并考虑滚动条位置）
+            let newX = clientX - canvasRect.left + scrollLeft - xOffset;
+            let newY = clientY - canvasRect.top + scrollTop - yOffset;
+            
+            // 边界限制
+            newX = Math.max(0, newX);
+            newY = Math.max(0, newY); 
+
+            activeVoucher.style.left = `${newX}px`;
+            activeVoucher.style.top = `${newY}px`;
+            
+            updateCanvasHeight(); 
+        }
+
+        function dragEnd(e) {
+            if (!activeVoucher) return;
+            activeVoucher.classList.remove('cursor-grabbing');
+
+            // 如果不是拖拽操作 (isDragging为false)，则视为单击事件，显示详情
+            if (!isDragging) {
+                showVoucherDetails(activeVoucher);
+            } else {
+                // 如果是拖拽结束，取消选中状态
+                activeVoucher.classList.remove('selected');
+                // 拖拽结束后，重新计算画布高度以适应元素
+                updateCanvasHeight(); 
+            }
+
+            activeVoucher = null;
+            isDragging = false;
+
+            canvasArea.removeEventListener('mousemove', drag, false);
+            canvasArea.removeEventListener('mouseup', dragEnd, false);
+            canvasArea.removeEventListener('touchmove', drag, false);
+            canvasArea.removeEventListener('touchend', dragEnd, false);
+        }
+        
+        // 动态调整画布高度以适应所有票据
+        function updateCanvasHeight() {
+            const vouchers = document.querySelectorAll('.voucher');
+            if (vouchers.length === 0) {
+                // 如果没有票据，重置为最小高度
+                canvasArea.style.height = parseFloat(getComputedStyle(canvasArea).minHeight) + 'px';
+                return;
+            }
+
+            let maxBottom = 0; 
+            const minHeight = parseFloat(getComputedStyle(canvasArea).minHeight);
+            const padding = 60; // 底部预留更多空间
+
+            vouchers.forEach(voucher => {
+                const bottom = voucher.offsetTop + voucher.offsetHeight + padding;
+                maxBottom = Math.max(maxBottom, bottom);
+            });
+
+            // 确保内容高度至少是 minHeight
+            const finalHeight = Math.max(maxBottom, minHeight);
+            
+            // 只有当计算出的高度大于当前设置的高度时才更新，避免闪烁
+            if (finalHeight > canvasArea.clientHeight) {
+                canvasArea.style.height = `${finalHeight}px`;
+            }
+        }
+        
+        // 旋转功能 (双击模拟)
+        function rotateVoucher(e) {
+            if (e.target.closest('.voucher')) {
+                const voucher = e.target.closest('.voucher');
+                const currentTransform = voucher.style.transform || 'rotate(0deg)';
+                const match = currentTransform.match(/rotate\(([-]?\d+)/);
+                let currentRotation = match ? parseInt(match[1]) : 0;
+                
+                // 每次旋转 90 度
+                currentRotation = (currentRotation + 90) % 360;
+                voucher.style.transform = `rotate(${currentRotation}deg)`;
+                showMessage(`${getI18nText('msg_voucher')} #${voucher.dataset.id} ${getI18nText('msg_rotated')}`, 'info', 1000);
+                e.stopPropagation(); // 阻止双击触发其他事件
+            }
+        }
+
+        function makeInteractive(el) {
+            el.addEventListener('mousedown', dragStart, false);
+            el.addEventListener('touchstart', dragStart, false);
+            el.addEventListener('dblclick', rotateVoucher); // 双击旋转
+        }
+        
+        // 点击画布空白区域取消选中
+        canvasArea.addEventListener('click', (e) => {
+            if (e.target === canvasArea || e.target.id === 'canvas-hint') {
+                document.getElementById('close-sidebar-btn').click();
+            }
+        });
+
+
+        // --- 智能吸附/对齐逻辑 (不变) ---
+        document.getElementById('align-btn').addEventListener('click', () => {
+            const vouchers = Array.from(document.querySelectorAll('.voucher'));
+            if (vouchers.length === 0) {
+                showMessage(getI18nText('msg_no_vouchers'), 'info');
+                return;
+            }
+
+            // 清除选中状态和侧边栏
+            document.getElementById('close-sidebar-btn').click();
+
+            const layoutMode = document.getElementById('layout-mode-select').value;
+            let sortedVouchers = [...vouchers]; // 复制一份用于排序
+
+            if (layoutMode === 'DateGroup') {
+                // 按日期倒序 (最新的在最前)
+                sortedVouchers.sort((a, b) => b.dataset.date.localeCompare(a.dataset.date));
+                showMessage(getI18nText('msg_align_date'), 'success');
+            } else if (layoutMode === 'CategoryGroup') {
+                // 按类别排序，类别内按金额倒序
+                sortedVouchers.sort((a, b) => {
+                    const categoryA = a.dataset.category;
+                    const categoryB = b.dataset.category;
+                    const amountA = parseFloat(a.dataset.amount);
+                    const amountB = parseFloat(b.dataset.amount);
+
+                    if (categoryA < categoryB) return -1;
+                    if (categoryA > categoryB) return 1;
+                    return amountB - amountA; // 类别内，金额高的在前
+                });
+                showMessage(getI18nText('msg_align_category'), 'success');
+            } else {
+                // 默认 A4 对齐 (不排序)
+                showMessage(getI18nText('msg_align_a4'), 'success');
+            }
+            
+            // --- 应用网格布局到 sortedVouchers ---
+            const padding = 20;
+            const voucherGap = 20; // 票据间距
+            let startX = padding;
+            let startY = padding;
+            const maxColumns = 4; 
+            let currentColumn = 0;
+            let maxVoucherHeight = 0; 
+            
+            let previousGroupKey = null;
+
+            sortedVouchers.forEach((voucher) => {
+                let currentGroupKey;
+                if (layoutMode === 'DateGroup') {
+                    currentGroupKey = voucher.dataset.date.substring(0, 7); // 按年/月分组
+                } else if (layoutMode === 'CategoryGroup') {
+                    currentGroupKey = voucher.dataset.category;
+                } else {
+                    currentGroupKey = 'default'; // A4 模式
+                }
+                
+                // 检查是否开始新分组，并添加更大的垂直空间
+                if (previousGroupKey !== null && currentGroupKey !== previousGroupKey) {
+                    // 换行并增加额外的组间距
+                    currentColumn = 0;
+                    startY += maxVoucherHeight + voucherGap * 3; 
+                    startX = padding;
+                    maxVoucherHeight = 0;
+                }
+
+                // 移除旋转以保证整齐排版
+                voucher.style.transform = 'rotate(0deg)';
+                
+                const width = voucher.offsetWidth;
+                const height = voucher.offsetHeight;
+
+                // 假设画布最大宽度为 1200px (max-w-7xl 接近)
+                const canvasMaxWidth = 1200; 
+
+                if (currentColumn >= maxColumns || (startX + width + padding) > canvasMaxWidth) {
+                    // 内部换行
+                    currentColumn = 0;
+                    startY += maxVoucherHeight + voucherGap;
+                    startX = padding;
+                    maxVoucherHeight = 0;
+                }
+
+                // 设置新位置
+                voucher.style.left = `${startX}px`;
+                voucher.style.top = `${startY}px`;
+
+                // 更新下一张票据的起始位置和组信息
+                startX += width + voucherGap;
+                currentColumn++;
+                maxVoucherHeight = Math.max(maxVoucherHeight, height);
+                previousGroupKey = currentGroupKey;
+            });
+            
+            // 自动调整画布高度，确保所有对齐的票据都可见
+            updateCanvasHeight();
+
+        });
+
+        // --- 导出功能模拟 (不变) ---
+        document.getElementById('export-btn').addEventListener('click', () => {
+            const count = document.querySelectorAll('.voucher').length;
+            if (count === 0) {
+                showMessage(getI18nText('msg_export_error'), 'error');
+                return;
+            }
+            showMessage(getI18nText('msg_export_in_progress', count), 'info', 2000);
+            setTimeout(() => {
+                showMessage(getI18nText('msg_export_success'), 'success', 5000);
+            }, 2500);
+        });
+        
+        // 初始化时添加模拟票据
+        window.onload = () => {
+            // 1. 设置默认语言并翻译 UI
+            translateUI(currentLanguage);
+
+            // 2. 初始加载 20 张模拟票据
+            for (let i = 0; i < 20; i++) {
+                const data = MOCK_VOUCHER_TYPES[i % MOCK_VOUCHER_TYPES.length];
+                // 重新计算 x/y 坐标以保证散开效果
+                const x = Math.random() * (canvasArea.clientWidth - 160); 
+                const y = Math.random() * (canvasArea.clientHeight - 90);
+                const rotation = Math.floor(Math.random() * 60) - 30;
+
+                const element = createVoucherElement(i + 1, data, x, y, rotation);
+                canvasArea.appendChild(element);
+                makeInteractive(element);
+                voucherCount = i + 1;
+            }
+
+            showMessage(getI18nText('msg_welcome'), 'info', 8000);
+            
+            // 移除画布中央的提示文本
+            const hint = canvasArea.querySelector('.pointer-events-none');
+            if (hint) hint.remove();
+            
+            // 首次加载后调整画布高度
+            updateCanvasHeight();
+        };
+
+    </script>
+    </body>
+    </html>
